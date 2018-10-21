@@ -11,6 +11,7 @@ import com.pinyougou.pojo.TbContentExample.Criteria;
 import com.pinyougou.content.service.ContentService;
 
 import entity.PageResult;
+import org.springframework.data.redis.core.RedisTemplate;
 
 /**
  * 服务实现层
@@ -46,7 +47,8 @@ public class ContentServiceImpl implements ContentService {
 	 */
 	@Override
 	public void add(TbContent content) {
-		contentMapper.insert(content);		
+		contentMapper.insert(content);
+		redisTemplate.boundHashOps("content").delete(content.getCategoryId());
 	}
 
 	
@@ -55,7 +57,17 @@ public class ContentServiceImpl implements ContentService {
 	 */
 	@Override
 	public void update(TbContent content){
+		//查询修改前的分类Id
+		Long categoryId = contentMapper.selectByPrimaryKey(content.getId()).getCategoryId();
+		redisTemplate.boundHashOps("content").delete(categoryId);
+
 		contentMapper.updateByPrimaryKey(content);
+		//如果分类ID发生了修改,清除修改后的分类ID的缓存
+		if (content.getCategoryId().longValue() != categoryId.longValue())
+		{
+			redisTemplate.boundHashOps("content").delete(content.getCategoryId());
+
+		}
 	}	
 	
 	/**
@@ -74,6 +86,8 @@ public class ContentServiceImpl implements ContentService {
 	@Override
 	public void delete(Long[] ids) {
 		for(Long id:ids){
+			Long categoryId = contentMapper.selectByPrimaryKey(id).getCategoryId();
+			redisTemplate.boundHashOps("content").delete(categoryId);
 			contentMapper.deleteByPrimaryKey(id);
 		}		
 	}
@@ -105,5 +119,30 @@ public class ContentServiceImpl implements ContentService {
 		Page<TbContent> page= (Page<TbContent>)contentMapper.selectByExample(example);		
 		return new PageResult(page.getTotal(), page.getResult());
 	}
-	
+
+	@Autowired
+	private RedisTemplate redisTemplate;
+
+	@Override
+	public List<TbContent> findByCategoryId(Long categoryId)
+	{
+		List<TbContent> list = (List<TbContent>) redisTemplate.boundHashOps("content").get(categoryId);
+		if (list == null)
+		{
+			System.out.println("从数据库中取");
+			TbContentExample example = new TbContentExample();
+			Criteria criteria = example.createCriteria();
+			criteria.andCategoryIdEqualTo(categoryId);
+			criteria.andStatusEqualTo("1");
+			example.setOrderByClause("sort_order");
+
+			list = contentMapper.selectByExample(example);
+		}else
+		{
+			System.out.println("从缓存中取");
+		}
+
+		return list;
+	}
+
 }
